@@ -3,6 +3,7 @@ import pandas as pd
 import ta
 import json
 import time
+import pandas_ta as pta
 
 from sklearn import preprocessing
 from utils import indicators, feature_selection
@@ -271,8 +272,8 @@ def profit_loss_action(
         action,
         trade_log,
         cut_loss=-5,
-        take_profit=40,
-        max_hold_days=30,
+        take_profit=100,
+        max_hold_days=90,
         trade_list=[],
         isBackTest=False):
 

@@ -104,8 +104,6 @@ def get_action(data,net):
         trade_log['open_position'] = position_change * 100
 
     trade_log = stock_helper.AnalyzeTrainedData(trade_log, 9)
-    #trade_log = stock_helper.AnalyzeTrainedData(trade_log, 2)
-    #trade_log = stock_helper.AnalyzeTrainedData(trade_log, 3)
 
     return float(trade_log["reward"])
 

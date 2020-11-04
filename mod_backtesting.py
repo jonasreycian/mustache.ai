@@ -120,7 +120,7 @@ def run(config_file):
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_file)
 
-    winner = pickle.load(open(f"result/winner/{strategy}/{current_stock}.pickle", "rb"))
+    winner = pickle.load(open(f"result/model/{strategy}/{current_stock}.pickle", "rb"))
     winner_net = neat.nn.RecurrentNetwork.create(winner, config)
 
     fitness_reward = get_action(current_stock_data, winner_net)
