@@ -1,14 +1,19 @@
+from ast import parse
+from multiprocessing import Array
 import os
+from os import close
+from numpy.lib.function_base import average
 import pandas as pd
 import ta
 import json
 import time
-import pandas_ta as pta
+import pandas_ta
 
 from sklearn import preprocessing
 from utils import indicators, feature_selection
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import CCIIndicator, MACD
+from ta.volume import AccDistIndexIndicator
 from AlmaIndicator import ALMAIndicator
 
 # hide warnings
@@ -141,6 +146,7 @@ def get_all_stock_data():
         dfs.append(df)
 
     main_df = pd.concat(dfs)
+
     main_df.drop('Netforeign', 1, inplace=True)
     main_df.tail()
 
@@ -190,18 +196,19 @@ def AddFeatures(data, category):
 
     if category=="all" or category=="momentum":
         # Append all Momentum-related features
-        print(f'data ${data}')
         data = ta.add_momentum_ta(data, high="High", low="Low", close="Close", volume="Volume")
+        # data.pta.indicators()
+        print(f'data ${data}')
 
-    elif category=="all" or category=="trend":
+    if category=="all" or category=="trend":
         # Append all tren-related features
         data = ta.add_trend_ta(data, high="High", low="Low", close="Close")
 
-    elif category=="all" or category=="volatility":
+    if category=="all" or category=="volatility":
         # Append all volatility-related features
         data = ta.add_volatility_ta(data, high="High", low="Low", close="Close")
 
-    elif category=="all" or category=="volume":
+    if category=="all" or category=="volume":
         # Append all volume-related features
         data = ta.add_volume_ta(data, high="High", low="Low", close="Close", volume="Volume")
 
@@ -218,32 +225,6 @@ def AddFeatures(data, category):
         data = indicators.ema(data, period=55)
         data = indicators.volume(data, period=20)
 
-    elif category=='bottom_fish':
-        # BUY:
-        #   CCI > -100
-        #   DCHL/DCHLI: Candle must touch the the lower indicators0
-        data = ta.add_all_ta_features(data, open='Open', high='High', low='Low', close='Close', volume='Volume')
-
-        bottom_fish_list = ["Open","High","Low","Close", "Volume", \
-            "volatility_dcl", "volatility_dch", "volatility_dcli", "volatility_dchi", "trend_cci"]
-        bottom_fish = data[bottom_fish_list]
-        bottom_fish['volatility_dcl'] = data['volatility_dcl']
-        bottom_fish['volatility_dch'] = data['volatility_dch']
-        bottom_fish['volatility_dcli'] = data['volatility_dcl']
-        bottom_fish['volatility_dchi'] = data['volatility_dch']
-        bottom_fish['trend_cci'] = data['trend_cci']
-        bottom_fish = indicators.volume(bottom_fish, period=20)
-        data = bottom_fish
-
-    elif category=='macdo':
-        indicator_macd = MACD(close=data['Close'], n_slow=20, n_fast=5, n_sign=5)
-        data['trend_macd'] = indicator_macd.macd()
-        data = indicators.ma(data, period=200)
-        data = indicators.ema(data, period=62)
-        data = indicators.ema(data, period=38)
-        data = indicators.volume(data, period=20)
-
-
     elif category=='almarsi':
         alma_indicator = ALMAIndicator(close=data['Close'])
         data['alma9'] = alma_indicator.alma()
@@ -252,6 +233,21 @@ def AddFeatures(data, category):
         data = indicators.rsi(data, period=9)
         data = indicators.rsi(data, period=25)
         data = indicators.rsi(data, period=12)
+    elif category == 'hayahay':
+        data = indicators.ema(data, period=9)
+        data = indicators.ema(data, period=50)
+        data = indicators.ema(data, period=20)
+        data = indicators.ema(data, period=200)
+        data['rsi14'] = RSIIndicator(close=data['Close']).rsi()
+        data['rsi25'] = RSIIndicator(close=data['Close'], n=25).rsi()
+        data['alma15'] = ALMAIndicator(close=data['Close'], period=15).alma()
+        data['alma9'] = ALMAIndicator(close=data['Close'], period=9).alma()
+        data['adi'] = AccDistIndexIndicator(high=data['High'], low=data['Low'], close=data['Close'], volume=data['Volume']).acc_dist_index()
+        data['chop'] = pandas_ta.chop(
+            high=pandas_ta.ohlc4(open_=data['Open'] , high=data['High'], low=data['Low'], close=data['Close']),
+            low=pandas_ta.ohlc4(open_=data['Open'] , high=data['High'], low=data['Low'], close=data['Close']),
+            close=pandas_ta.ohlc4(open_=data['Open'] , high=data['High'], low=data['Low'], close=data['Close']),
+            length=28)
 
     # print (data)
     if category=="all":
@@ -259,36 +255,60 @@ def AddFeatures(data, category):
     else:
         data.dropna(inplace=True)
 
-    # print (data)
-
     # Scale the value
     for col in data.columns[:]:
         data[col] = preprocessing.scale(data[col].values)
 
-    # print (data)
     return data
 
+# Trade Idea / Rules
+#   Sell if capital at risk is reach
+#
 def profit_loss_action(
         action,
         trade_log,
-        cut_loss=-5,
+        row_data,
+        cut_loss=3,
         take_profit=100,
         max_hold_days=90,
         trade_list=[],
         isBackTest=False):
 
-    if trade_log['current_position'] == 0:
-        trade_log['current_position'] = 1
+    trade_log['current_price']  = row_data[-1]
+    trade_log['board_lot']      = GetBoardLot(row_data[-1])
 
-    position_change = (
-        trade_log['current_price'] - trade_log['current_position']
-        ) / trade_log['current_position'] * 100
+    position_change = 0
+    if trade_log['position_days'] > 0:
+        position_change = (trade_log['current_price'] - trade_log['current_position']) / trade_log['current_position'] * 100
+
+        # Get the current market value and average market price when trade happened of uncommitted shares
+        average_market_price        = trade_log['total_shares'] * trade_log['current_position']
+        trade_log['market_value']   = trade_log['total_shares'] * trade_log['current_price']
+
+        # Total acount equity formula: ACTUAL_BALANCE + CURRENT_MARKET_VALUE
+        trade_log['equity_balance'] = trade_log['market_value'] + trade_log['actual_balance']
+
+        # Compute the current port gain/loss including percentage
+        trade_log['equity_gain_loss']       = trade_log['market_value'] - average_market_price
+        trade_log['equity_gain_loss_pct']   = trade_log['equity_gain_loss'] / trade_log['equity_balance']
 
     # If action is BUY and has no position
     if (action == 1) and trade_log['position_days'] == 0 :
-        trade_log['position_days'] = 1
-        trade_log['current_position'] = trade_log['current_price']
-        trade_log['position_date'] = trade_log['current_date']
+        trade_log['position_days']      = 1
+        trade_log['current_position']   = trade_log['current_price']
+        trade_log['position_date']      = trade_log['current_date']
+
+        # Buy maximum allotted shares based on actual balance
+        max_share                   = trade_log['actual_balance'] / trade_log['current_price']
+        max_share_per_lot           = max_share - (max_share % trade_log['board_lot'])
+        trade_log['total_shares']   = max_share_per_lot
+
+        # Apply PSE Charges
+        trade_log                   = BuyTransaction(trade_log)
+
+        # Computation does not include PSE Charges
+        trade_log['market_value']           = trade_log['total_shares'] * trade_log['current_price']
+        trade_log['actual_balance']         -= trade_log['market_value_ave']
 
         if isBackTest:
             # Record the trade made
@@ -304,11 +324,12 @@ def profit_loss_action(
         trade_log['position_days'] += 1
 
         # Sell if meet the condition
+        #   1. Holding period is reach
+        #   2. Capital at risk is reach
         if trade_log['position_days'] > max_hold_days \
-            or position_change <= cut_loss \
-            or position_change >= take_profit:
+            or trade_log['equity_gain_loss_pct'] <= trade_log['capital_at_risk']:
 
-            trade_log, trade_list = ExecuteTrade(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
+            trade_log, trade_list = SellTransaction(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
 
     # If action is SELL and has no position
     elif action == 2 and trade_log['position_days'] == 0:
@@ -316,9 +337,12 @@ def profit_loss_action(
 
     # If action is SELL and has position
     elif action == 2 and trade_log['position_days'] > 0:
-        # Sell if meet the condition. 1:1 RRR
-        if position_change <= cut_loss or position_change >= abs(cut_loss):
-            trade_log, trade_list = ExecuteTrade(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
+        # Sell if meet the condition.
+        #   1. Capital at risk is reach
+        #   2. Percent change is equal or above 3%
+        if trade_log['equity_gain_loss_pct'] <= trade_log['capital_at_risk'] \
+            and position_change >= (cut_loss):
+            trade_log, trade_list = SellTransaction(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
         else:
             trade_log['position_days'] += 1
 
@@ -329,13 +353,15 @@ def profit_loss_action(
 
 #     """if action is hold and has position"""
     elif action == 0 and trade_log['position_days'] > 0 :
-        # Maximum holding period is only 30days and
-        # has achieved -10% loss or 20% gain
+        # Sell if meet the condition
+        #   1. Holding period is reach
+        #   2. Capital at risk is reach
+        #   2. Take Profit is reach
         if trade_log['position_days'] > max_hold_days \
-            or position_change <= cut_loss \
+            or trade_log['equity_gain_loss_pct'] <= trade_log['capital_at_risk'] \
             or position_change >= take_profit:
 
-            trade_log, trade_list = ExecuteTrade(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
+            trade_log, trade_list = SellTransaction(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
         else:
             trade_log['position_days'] += 1
 
@@ -344,11 +370,39 @@ def profit_loss_action(
     else:
         return trade_log
 
-def ExecuteTrade(trade_log, position_change, isBackTest=False, trade_list=[]):
+def BuyTransaction(trade_log):
+    """
+        Get average price and average market price by applying PSE Stock Fees.
+
+        Returns:
+            current_position_ave, market_value_ave
+    """
+
+    # PSE Charges
+    #   Gross Transaction Amount    : share x price
+    #   Broker's Commission         : 0.25% x GROSS_TRANSACTION_AMOUNT
+    #   Broker's Commission VAT     : 12% x BROKER_COMMISION
+    #   SCCP Fee                    : 0.01% x GROSS_TRANSACTION_AMOUNT
+    #   PSE Transaction Fee         : 0.0005% x GROSS_TRANSACTION_AMOUNT
+
+    gross_transaction_amount    = trade_log['current_price'] * trade_log['total_shares']
+    brokers_commision           = 0.0025 * gross_transaction_amount
+    brokers_commision_vat       = 0.12 * brokers_commision
+    sccp_fee                    = 0.0001 * gross_transaction_amount
+    pse_transaction_fee         = 0.000005 * gross_transaction_amount
+
+    net_transaction_amount      = gross_transaction_amount + brokers_commision + brokers_commision_vat + sccp_fee + pse_transaction_fee
+
+    trade_log['current_position_ave']   = net_transaction_amount / trade_log['total_shares']
+    trade_log['market_value_ave']       = net_transaction_amount
+
+    return trade_log
+
+def SellTransaction(trade_log, position_change, isBackTest=False, trade_list=[]):
     """
     Executing the trade
 
-    Parameters:
+    Args:
         trade_log: The trade logs for the current sessions
         position_change: dfsdfsdf
     """
@@ -372,8 +426,13 @@ def ExecuteTrade(trade_log, position_change, isBackTest=False, trade_list=[]):
             'SELL'
         ])
 
-    trade_log['cumulative_profit'] += (trade_log['current_price'] - trade_log['current_position'])
+    trade_log['actual_balance'] += (trade_log['total_shares'] * trade_log['current_price'])
+
+    trade_log['cumulative_profit'] += (trade_log['current_price'] - trade_log['current_position']) * trade_log['total_shares']
     trade_log['position_date'] = trade_log['current_date']
+    trade_log['total_shares'] = trade_log['uncommited_shares'] = 0
+    trade_log['equity_gain_loss']         = 0
+    trade_log['equity_gain_loss_pct'] = 0
 
     # Reset position_days
     trade_log['position_days'] = 0
@@ -407,3 +466,26 @@ def format_json(json_data, indent = 4, sort_keys=True):
 def WriteJSONFile(filepath='./result/analysis/', filename="", data={}):
     with open(f'{filepath+filename}', 'w') as fp:
         json.dump(data, fp)
+
+def GetBoardLot(current_price):
+    lot_size = 5
+    # Price between 0.0001 and 0.0099
+    if (current_price <= 0.0099):
+        lot_size = 1000000
+    # Price between 0.01 and 0.049
+    elif (current_price <= 0.495):
+        lot_size = 100000
+    # Price between 0.05 and 0.495
+    elif (current_price <= 0.495):
+        lot_size = 10000
+    # Price between 0.5 and 4.99
+    elif (current_price <= 4.99):
+        lot_size = 1000
+    # Price between 5 and 49.95
+    elif (current_price <= 49.95):
+        lot_size = 100
+    # Price between 50 and 999.5
+    elif (current_price <= 999.5):
+        lot_size = 10
+
+    return lot_size

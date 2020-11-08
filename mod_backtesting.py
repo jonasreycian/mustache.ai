@@ -26,7 +26,7 @@ current_stock = ""
 current_stock_data = ""
 stock_data = stock_helper.get_all_stock_data()
 fitness_analysis = {}
-strategy = "momentum"
+strategy = "hayahay"
 
 def deque_sequence(data):
     global sequence_length
@@ -120,7 +120,8 @@ def run(config_file):
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_file)
 
-    winner = pickle.load(open(f"result/model/{strategy}/{current_stock}.pickle", "rb"))
+    # winner = pickle.load(open(f"result/winner/{strategy}/{current_stock}.pickle", "rb"))
+    winner = pickle.load(open(f"result/winner/{strategy}/JFC.pickle", "rb"))
     winner_net = neat.nn.RecurrentNetwork.create(winner, config)
 
     fitness_reward = get_action(current_stock_data, winner_net)
@@ -140,18 +141,17 @@ if __name__ == '__main__':
     ignore_stock = ['JFC']
 
     for stock in stock_list:
-
-        if stock in ignore_stock:
-            current_stock = stock
-            current_stock_data = feature_selection.GetTopFeatures(stock,
-                    stock_data,
-                    max_feature=15,
-                    isTrain=False,
-                    category=strategy)
-            run(config_path)
-            stock_helper.WriteJSONFile(filename=f'analysis_{time.strftime("%m%d%Y")}_20Gen.json', data=fitness_analysis)
+        current_stock = stock
+        current_stock_data = feature_selection.GetTopFeatures(stock,
+                stock_data,
+                max_feature=15,
+                isTrain=False,
+                category=strategy)
+        run(config_path)
+        stock_helper.WriteJSONFile(filename=f'analysis_{time.strftime("%m%d%Y")}_20Gen.json', data=fitness_analysis)
 
 
     trade_list = pd.DataFrame(
         trade_list, columns=['Date', 'Stock', 'Price', 'Action'])
+    trade_list.sort_index(ascending=False)
     trade_list.to_csv((f'result/backtest_result_{time.strftime("%m%d%Y")}.csv'), index=False)

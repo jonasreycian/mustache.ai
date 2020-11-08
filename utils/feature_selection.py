@@ -7,16 +7,16 @@ from utils import stock_helper as std
 
 stock_cache = {}
 
-def GetCorrelationMatixPerStock(data, noOfFeature, category):
+def GetCorrelationMatixPerStock(stock_data, noOfFeature, category):
 
-    # Adding features
-    features = std.AddFeatures(data, category=category)
+    # Data with features
+    features = std.AddFeatures(stock_data, category=category)
 
     # Make a correlation matrix among  features and target variable. Finally show a Heat Map with the values of the correlation matrix.
     featuresCorr = features.corr()
 
     # Sort the value
-    featuresCorr = featuresCorr['Open'].sort_values(ascending=False)
+    featuresCorr = featuresCorr['Close'].sort_values(ascending=False)
     # Remove OHLC
     # featuresCorr = featuresCorr[4:]
 
@@ -28,7 +28,7 @@ def GetCorrelationMatixPerStock(data, noOfFeature, category):
     # print (featuresCorr.index.T.values)
     features = features[featuresCorr.index.T.values]
 
-    print (features)
+    # print (features)
 
     return features
 
@@ -42,8 +42,7 @@ def GetTopFeatures(stock: str, stock_data, max_feature=5, isTrain=True, category
     """
 
     # Store stock data
-    stock_data = stock_data.get_group(stock)
-    stock_data = stock_data.get_group(stock)
+    stock_data = stock_data.get_group(stock).loc['2010-01-01':]
 
     data = []
     if stock in stock_cache:
@@ -58,7 +57,6 @@ def GetTopFeatures(stock: str, stock_data, max_feature=5, isTrain=True, category
 
     # print (data)
 
-    data = data.loc['2010-01-01':]
 
     # Get the 80% of data to be trained
     if isTrain:

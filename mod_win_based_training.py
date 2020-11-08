@@ -26,7 +26,7 @@ current_stock = ""
 current_stock_data = ""
 stock_data = stock_helper.get_all_stock_data()
 reward_log = {}
-strategy = "momentum"
+strategy = "hayahay"
 
 def save_winner(winner, stock):
     pickle_out = open(f"result/winner/{strategy}/{stock}.pickle", "wb")
@@ -53,17 +53,33 @@ def get_action(data,net):
 
     global current_stock
 
-    trade_log = {}
-    trade_log['stock_name'] = current_stock
-    trade_log['position_days'] = 0
-    trade_log['current_position'] = 0
-    trade_log['total_trades'] = 0
-    trade_log['profit_win'] = 0
-    trade_log['profit_win_count'] = 0
-    trade_log['profit_loss'] = 0
-    trade_log['profit_loss_count'] = 0
-    trade_log['cumulative_profit'] = 0
-    trade_log['position_date'] = ""
+    trade_log = {
+        'stock_name':           current_stock,
+        'position_days':        0,
+        'total_trades':         0,
+        'profit_win':           0,
+        'profit_win_count':     0,
+        'profit_loss':          0,
+        'profit_loss_count':    0,
+        'cumulative_profit':    0,
+        'position_date':        "",
+        'position_days':        0,
+
+        'equity_balance':       8000,
+        'actual_balance':       8000,
+        'total_shares':         0,
+
+        'current_position_ave': 0,
+        'current_position':     0,
+        'market_value_ave':     0,
+        'market_value':         0,
+
+        'equity_gain_loss':     0,
+        'equity_gain_loss_pct': 0,
+        'board_lot':            0,
+
+        'capital_at_risk':      -5
+    }
 
     i = 0
     #FEEDING THE NEURAL NET
@@ -87,10 +103,9 @@ def get_action(data,net):
         action = np.argmax(output, axis=0)
 
         # Profit/loss ratio
-        trade_log['current_date'] = data.index[i]
-        trade_log['current_price'] = vals[-1]
+        trade_log['current_date']   = data.index[i]
 
-        trade_log = stock_helper.profit_loss_action(action,trade_log)
+        trade_log = stock_helper.profit_loss_action(action,trade_log, row_data=vals)
 
         i += 1
 
