@@ -2,12 +2,15 @@ from ast import parse
 from multiprocessing import Array
 import os
 from os import close
+from numpy.lib import type_check
 from numpy.lib.function_base import average
 import pandas as pd
 import ta
 import json
 import time
 import pandas_ta
+import numpy as np
+from collections import deque
 
 from sklearn import preprocessing
 from utils import indicators, feature_selection
@@ -22,97 +25,30 @@ warnings.filterwarnings('ignore')
 
 def AnalyzeTrainedData(trade_log, reward_cat):
     """
-    Average Profitability Per Trade
-        This will compute the average profit change per trade
-    Formula:
-        APPT = (PW×AW) − (PL×AL)
-        where:
-        PW = Probability of win
-        AW = Average win
-        PL = Probability of loss
-        AL = Average loss
-
-    Param:
-        trade_log: Log of the current trade
+    Reward is based on the equity size
 
     """
     trade_log['total_trades'] = 1 if trade_log['total_trades']==0 else trade_log['total_trades']
 
-    pw = trade_log['profit_win_count'] / trade_log['total_trades']
-    aw = trade_log['profit_win'] / trade_log['total_trades']
-    pl = trade_log['profit_loss_count'] / trade_log['total_trades']
-    al = trade_log['profit_loss'] / trade_log['total_trades']
+    pw = trade_log['win_count'] / trade_log['total_trades']
 
-    # Compute the appt
-    trade_log['appt'] = (pw*aw) - (pl*al)
     # Compute the win_ratio
-    trade_log['win_ratio'] = trade_log["profit_win_count"] / trade_log['total_trades'] * 100
+    trade_log['win_ratio'] = trade_log["win_count"] / trade_log['total_trades'] * 100
 
-    trade_log['pwaw'] = (pw*aw)
-
-    # Compute the win_loss_ratio
-    if trade_log['profit_loss_count'] == 0:
-        trade_log['win_loss_ratio'] = trade_log["profit_win_count"]
-    else:
-        trade_log['win_loss_ratio'] = trade_log["profit_win_count"] / trade_log['profit_loss_count']
-
-    # Get reward
-    trade_log = GetReward(reward_cat, trade_log)
+    # Reward
+    # trade_log['reward'] = trade_log['port_balance'] if (trade_log['position_days'] == 0) else trade_log['port_balance'] + trade_log['port_gain_loss']
+    trade_log['reward'] = trade_log['cumulative_profit'] if (trade_log['position_days'] == 0) else trade_log['cumulative_profit'] + trade_log['port_gain_loss']
 
     print ( f'{trade_log["stock_name"]}\t' +
-            f'{trade_log["profit_win_count"]}\t' +
-            f'{trade_log["profit_loss_count"]}\t' +
+            f'{trade_log["win_count"]}\t' +
+            f'{trade_log["loss_count"]}\t' +
             f'{trade_log["total_trades"]}' +
-            '\tWLRatio: {0:.2f}'.format(trade_log["win_loss_ratio"]) +
-            '\tAPPT: {0:.2f}'.format(trade_log["appt"]) +
             '\tWinRat: {0:.2f}'.format(trade_log["win_ratio"]) +
-            '\tReward: {0:.2f}'.format(trade_log["reward"])+
-            '\tOpenPos: {0:.2f}'.format(trade_log["open_position"])+
-            '\tCProfit: {0:.2f}'.format(trade_log["cumulative_profit"])+
-            f'\tLastTrade: {trade_log["position_date"]}'
+            f'\tLastTrade: {trade_log["position_date"]}' +
+            '\tReward: {0:.2f}'.format(trade_log["reward"])
             )
 
     return trade_log
-
-def GetReward(reward_cat, trade_log):
-    """
-    Return reward based on given fitness
-    """
-    # win_loss_ratio * appt * #trades
-    if reward_cat ==1:
-        trade_log['reward'] = trade_log['appt'] * trade_log['win_loss_ratio'] * trade_log['profit_win_count']
-    # win_loss_ratio * appt * #trades (Modified)
-    elif reward_cat ==2:
-        wl_ratio = 3 if trade_log['win_loss_ratio'] > 3 else trade_log['win_loss_ratio']
-        trade_log['reward'] = trade_log['appt'] * wl_ratio * trade_log['profit_win_count']
-    # profit_win_count win * appt
-    elif reward_cat ==3:
-        trade_log['reward'] = (trade_log['profit_win']**0.5) * trade_log['appt'] * (trade_log['win_loss_ratio']**0.5)
-    # profit_win_count win * appt
-    elif reward_cat ==4:
-        trade_log['reward'] = (trade_log['profit_win']**0.5) * \
-                              (trade_log['profit_win_count']**0.5)* \
-                              (trade_log['win_ratio']**0.5)
-    elif reward_cat ==5:
-        trade_log['reward'] = (trade_log['win_loss_ratio']**0.5) * \
-                            (trade_log['profit_win_count']**0.5) * \
-                            (trade_log['win_ratio']**0.5) * \
-                            (trade_log['profit_win']**0.5) * \
-                            trade_log['appt']
-    elif reward_cat ==6:
-        trade_log['reward'] = (trade_log['profit_win']**0.5) * \
-                                (trade_log['profit_win_count']**0.5)* \
-                                (trade_log['win_ratio']**0.5) * \
-                                trade_log['appt']
-    elif reward_cat ==7:
-        trade_log['reward'] = ((trade_log['profit_win']) - trade_log['profit_loss']) * (trade_log['win_ratio']**0.5)
-    elif reward_cat ==8:
-        trade_log['reward'] = (trade_log['cumulative_profit'] + trade_log['open_position']) * trade_log['win_loss_ratio']
-    elif reward_cat ==9:
-        trade_log['reward'] = trade_log['cumulative_profit'] + trade_log['open_position']
-
-    return trade_log
-
 
 def save_appt(appt_file):
     with open(f'result/appt/appt_{time.strftime("%m%d%Y")}.json', 'w') as json_file:
@@ -261,54 +197,123 @@ def AddFeatures(data, category):
 
     return data
 
+def deque_sequence(data, sequence_length):
+    #initialize deque .. sequence of
+    #number of sequence by open ,high ,low ,close++
+    sequence = deque(maxlen=sequence_length)
+
+    #if sequence_length = 6 .. it looks like this.. a 6 by 5 matrix
+    for _ in range(sequence_length):
+        sequence.append([0 for _ in data.columns[:-1]])
+
+    # print(f'Sequence: {sequence}')
+    return sequence
+
+def get_action(data,net, current_stock, sequence_length, backTest, trade_list=[]):
+
+    #initialize deque sequence
+    sequence = deque_sequence(data, sequence_length)
+
+    trade_log = {
+        'stock_name':           current_stock,
+        'position_days':        0,
+        'total_trades':         0,
+        'win_count':            0,
+        'loss_count':           0,
+        'cumulative_profit':    0,
+        'position_date':        "",
+
+        'port_balance':         20000,
+        'port_gain_loss':       0,
+        'port_gain_loss_pct':   0,
+
+        'actual_balance':       20000,
+        'total_shares':         0,
+
+        'current_position_ave': 0, # Average price (include market charges)
+        'current_position':     0,
+        'market_value_entry':   0,
+        'market_value':         0,
+
+        'board_lot':            0,
+        'capital_at_risk':      -5
+    }
+
+    i = 0
+    #FEEDING THE NEURAL NET
+    for vals in data.values:
+        #append the values of data (open,high,low,close) to deque sequence
+        sequence.append(vals[:-1])
+
+        #convert deque function to a numpy array
+        x = np.array(sequence)
+
+        #flatten features
+        x = x.flatten()
+
+#         #append positon_change and position days ... more feature
+#         x = np.append(x,[position_change,position_days])
+
+#         #feed features to neural network
+        output = net.activate(x)
+
+#       #action recomended by the neural network
+        action = np.argmax(output, axis=0)
+
+        # Profit/loss ratio
+        trade_log['current_date']   = data.index[i]
+        trade_log['current_price']  = vals[-1]
+        trade_log['board_lot']      = GetBoardLot(vals[-1])
+
+        if backTest:
+            trade_log, trade_list = profit_loss_action(action,trade_log, isBackTest=backTest, trade_list=trade_list)
+        else:
+            trade_log = profit_loss_action(action,trade_log, isBackTest=backTest)
+
+
+        i += 1
+
+    trade_log = AnalyzeTrainedData(trade_log, 9)
+
+    return float(trade_log["reward"])
+
 # Trade Idea / Rules
 #   Sell if capital at risk is reach
 #
 def profit_loss_action(
         action,
         trade_log,
-        row_data,
-        cut_loss=3,
+        cut_loss=2,
         take_profit=100,
-        max_hold_days=90,
+        max_hold_days=30,
         trade_list=[],
         isBackTest=False):
 
-    trade_log['current_price']  = row_data[-1]
-    trade_log['board_lot']      = GetBoardLot(row_data[-1])
-
-    position_change = 0
     if trade_log['position_days'] > 0:
-        position_change = (trade_log['current_price'] - trade_log['current_position']) / trade_log['current_position'] * 100
 
-        # Get the current market value and average market price when trade happened of uncommitted shares
-        average_market_price        = trade_log['total_shares'] * trade_log['current_position']
-        trade_log['market_value']   = trade_log['total_shares'] * trade_log['current_price']
-
-        # Total acount equity formula: ACTUAL_BALANCE + CURRENT_MARKET_VALUE
-        trade_log['equity_balance'] = trade_log['market_value'] + trade_log['actual_balance']
-
-        # Compute the current port gain/loss including percentage
-        trade_log['equity_gain_loss']       = trade_log['market_value'] - average_market_price
-        trade_log['equity_gain_loss_pct']   = trade_log['equity_gain_loss'] / trade_log['equity_balance']
+        # Compute the current market value (include PSE Charges)
+        trade_log = GetCurrentMarketValue(trade_log)
 
     # If action is BUY and has no position
     if (action == 1) and trade_log['position_days'] == 0 :
+        # Buy maximum allotted shares based on actual balance
+        max_share                   = trade_log['actual_balance'] / trade_log['current_price']
+        max_share_per_lot           = max_share - (max_share % trade_log['board_lot'])
+
+        if max_share_per_lot == 0:
+            return trade_log
+
         trade_log['position_days']      = 1
         trade_log['current_position']   = trade_log['current_price']
         trade_log['position_date']      = trade_log['current_date']
 
-        # Buy maximum allotted shares based on actual balance
-        max_share                   = trade_log['actual_balance'] / trade_log['current_price']
-        max_share_per_lot           = max_share - (max_share % trade_log['board_lot'])
         trade_log['total_shares']   = max_share_per_lot
 
         # Apply PSE Charges
         trade_log                   = BuyTransaction(trade_log)
 
         # Computation does not include PSE Charges
-        trade_log['market_value']           = trade_log['total_shares'] * trade_log['current_price']
-        trade_log['actual_balance']         -= trade_log['market_value_ave']
+        trade_log['actual_balance']         -= trade_log['market_value_entry']
 
         if isBackTest:
             # Record the trade made
@@ -326,10 +331,9 @@ def profit_loss_action(
         # Sell if meet the condition
         #   1. Holding period is reach
         #   2. Capital at risk is reach
-        if trade_log['position_days'] > max_hold_days \
-            or trade_log['equity_gain_loss_pct'] <= trade_log['capital_at_risk']:
-
-            trade_log, trade_list = SellTransaction(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
+        if trade_log['position_days'] > max_hold_days:
+            # or trade_log['port_gain_loss_pct'] <= trade_log['capital_at_risk']:
+            trade_log, trade_list = SellTransaction(trade_log, isBackTest=isBackTest, trade_list=trade_list)
 
     # If action is SELL and has no position
     elif action == 2 and trade_log['position_days'] == 0:
@@ -340,11 +344,11 @@ def profit_loss_action(
         # Sell if meet the condition.
         #   1. Capital at risk is reach
         #   2. Percent change is equal or above 3%
-        if trade_log['equity_gain_loss_pct'] <= trade_log['capital_at_risk'] \
-            and position_change >= (cut_loss):
-            trade_log, trade_list = SellTransaction(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
-        else:
-            trade_log['position_days'] += 1
+        # if trade_log['port_gain_loss_pct'] <= trade_log['capital_at_risk'] \
+        #     or trade_log['port_gain_loss_pct'] >= (cut_loss):
+        trade_log, trade_list = SellTransaction(trade_log, isBackTest=isBackTest, trade_list=trade_list)
+        # else:
+        #     trade_log['position_days'] += 1
 
 
     # If action is hold and has no position
@@ -358,10 +362,10 @@ def profit_loss_action(
         #   2. Capital at risk is reach
         #   2. Take Profit is reach
         if trade_log['position_days'] > max_hold_days \
-            or trade_log['equity_gain_loss_pct'] <= trade_log['capital_at_risk'] \
-            or position_change >= take_profit:
+            or trade_log['port_gain_loss_pct'] <= trade_log['capital_at_risk'] \
+            or trade_log['port_gain_loss_pct'] >= take_profit:
 
-            trade_log, trade_list = SellTransaction(trade_log, position_change, isBackTest=isBackTest, trade_list=trade_list)
+            trade_log, trade_list = SellTransaction(trade_log, isBackTest=isBackTest, trade_list=trade_list)
         else:
             trade_log['position_days'] += 1
 
@@ -369,6 +373,34 @@ def profit_loss_action(
         return trade_log, trade_list
     else:
         return trade_log
+
+def GetCurrentMarketValue(trade_log):
+    """ This will compute the current market value by computing the market charges when selling"""
+
+    # PSE Charges
+    #   Gross Transaction Amount    : share x price
+    #   Broker's Commission         : 0.25% x GROSS_TRANSACTION_AMOUNT
+    #   Broker's Commission VAT     : 12% x BROKER_COMMISION
+    #   SCCP Fee                    : 0.01% x GROSS_TRANSACTION_AMOUNT
+    #   PSE Transaction Fee         : 0.005% x GROSS_TRANSACTION_AMOUNT
+    #   Sales Transaction Tax	    : 0.6% of the gross trade value
+
+    gross_transaction_amount    = float(trade_log['current_price']) * trade_log['total_shares']
+    brokers_commision           = 0.0025 * gross_transaction_amount
+    brokers_commision           = 20 if brokers_commision <= 20 else brokers_commision
+
+    brokers_commision_vat       = 0.12 * brokers_commision
+    sccp_fee                    = 0.0001 * gross_transaction_amount
+    pse_transaction_fee         = 0.00005 * gross_transaction_amount
+    sales_tax                   = 0.006 * gross_transaction_amount
+
+    trade_log['market_value']   = gross_transaction_amount - ( brokers_commision + brokers_commision_vat + sccp_fee + pse_transaction_fee + sales_tax )
+
+    # Compute the difference of the entry market price than current
+    trade_log['port_gain_loss']       = trade_log['market_value'] - trade_log['market_value_entry']
+    trade_log['port_gain_loss_pct']   = (trade_log['port_gain_loss']  / trade_log['port_balance']) * 100
+
+    return trade_log
 
 def BuyTransaction(trade_log):
     """
@@ -387,35 +419,39 @@ def BuyTransaction(trade_log):
 
     gross_transaction_amount    = trade_log['current_price'] * trade_log['total_shares']
     brokers_commision           = 0.0025 * gross_transaction_amount
+    brokers_commision           = 20 if brokers_commision <= 20 else brokers_commision
+
     brokers_commision_vat       = 0.12 * brokers_commision
     sccp_fee                    = 0.0001 * gross_transaction_amount
-    pse_transaction_fee         = 0.000005 * gross_transaction_amount
+    pse_transaction_fee         = 0.00005 * gross_transaction_amount
 
     net_transaction_amount      = gross_transaction_amount + brokers_commision + brokers_commision_vat + sccp_fee + pse_transaction_fee
 
     trade_log['current_position_ave']   = net_transaction_amount / trade_log['total_shares']
-    trade_log['market_value_ave']       = net_transaction_amount
+    trade_log['market_value_entry']     = net_transaction_amount
+    trade_log['market_value']           = net_transaction_amount
 
     return trade_log
 
-def SellTransaction(trade_log, position_change, isBackTest=False, trade_list=[]):
+def SellTransaction(trade_log, isBackTest=False, trade_list=[]):
     """
-    Executing the trade
-
-    Args:
-        trade_log: The trade logs for the current sessions
-        position_change: dfsdfsdf
+    Executing the trade.
     """
 
-    if position_change > 0:
-        # trade_log['profit_win'] += position_change
-        trade_log['profit_win'] += trade_log['current_price'] - trade_log['current_position']
-        trade_log['profit_win_count'] += 1
-
+    if(trade_log['port_gain_loss'] >= 0):
+        trade_log['win_count']   += 1
     else:
-        # trade_log['profit_loss'] += abs(position_change)
-        trade_log['profit_loss'] += abs(trade_log['current_price'] - trade_log['current_position'])
-        trade_log['profit_loss_count'] += 1
+        trade_log['loss_count']  += 1
+
+    # Reset
+    trade_log['cumulative_profit']      += trade_log['port_gain_loss']
+    trade_log['port_balance']           += trade_log['port_gain_loss']
+    trade_log['actual_balance']         = trade_log['port_balance']
+    trade_log['port_gain_loss']         = 0
+    trade_log['port_gain_loss_pct']     = 0
+    trade_log['total_shares']           = 0
+    trade_log['position_days']          = 0
+    trade_log['total_trades']           += 1
 
     if isBackTest:
         # Record the trade made
@@ -426,18 +462,6 @@ def SellTransaction(trade_log, position_change, isBackTest=False, trade_list=[])
             'SELL'
         ])
 
-    trade_log['actual_balance'] += (trade_log['total_shares'] * trade_log['current_price'])
-
-    trade_log['cumulative_profit'] += (trade_log['current_price'] - trade_log['current_position']) * trade_log['total_shares']
-    trade_log['position_date'] = trade_log['current_date']
-    trade_log['total_shares'] = trade_log['uncommited_shares'] = 0
-    trade_log['equity_gain_loss']         = 0
-    trade_log['equity_gain_loss_pct'] = 0
-
-    # Reset position_days
-    trade_log['position_days'] = 0
-    # Increment total_trades
-    trade_log['total_trades'] += 1
 
     return trade_log, trade_list
 
@@ -469,6 +493,7 @@ def WriteJSONFile(filepath='./result/analysis/', filename="", data={}):
 
 def GetBoardLot(current_price):
     lot_size = 5
+    current_price = float(current_price)
     # Price between 0.0001 and 0.0099
     if (current_price <= 0.0099):
         lot_size = 1000000

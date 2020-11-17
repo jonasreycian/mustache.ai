@@ -1,23 +1,13 @@
-import pandas as pd
-import numpy as np
 import os
 import neat
 import pickle
-from collections import deque
 import multiprocessing
-import statistics
-import json
-import uuid
-import statistics
-import time
 
-from sklearn import preprocessing
 from utils import stock_helper
 from utils import feature_selection
 
 #hide warnings
 import warnings
-import random
 warnings.filterwarnings('ignore')
 
 # Global variable
@@ -33,95 +23,6 @@ def save_winner(winner, stock):
     pickle.dump(winner, pickle_out)
     pickle_out.close()
 
-def deque_sequence(data):
-    global sequence_length
-    #initialize deque .. sequence of
-    #number of sequence by open ,high ,low ,close++
-    sequence = deque(maxlen=sequence_length)
-
-    #if sequence_length = 6 .. it looks like this.. a 6 by 5 matrix
-    for _ in range(sequence_length):
-        sequence.append([0 for _ in data.columns[:-1]])
-
-    # print(f'Sequence: {sequence}')
-    return sequence
-
-def get_action(data,net):
-
-    #initialize deque sequence
-    sequence = deque_sequence(data)
-
-    global current_stock
-
-    trade_log = {
-        'stock_name':           current_stock,
-        'position_days':        0,
-        'total_trades':         0,
-        'profit_win':           0,
-        'profit_win_count':     0,
-        'profit_loss':          0,
-        'profit_loss_count':    0,
-        'cumulative_profit':    0,
-        'position_date':        "",
-        'position_days':        0,
-
-        'equity_balance':       8000,
-        'actual_balance':       8000,
-        'total_shares':         0,
-
-        'current_position_ave': 0,
-        'current_position':     0,
-        'market_value_ave':     0,
-        'market_value':         0,
-
-        'equity_gain_loss':     0,
-        'equity_gain_loss_pct': 0,
-        'board_lot':            0,
-
-        'capital_at_risk':      -5
-    }
-
-    i = 0
-    #FEEDING THE NEURAL NET
-    for vals in data.values:
-        #append the values of data (open,high,low,close) to deque sequence
-        sequence.append(vals[:-1])
-
-        #convert deque function to a numpy array
-        x = np.array(sequence)
-
-        #flatten features
-        x = x.flatten()
-
-#         #append positon_change and position days ... more feature
-#         x = np.append(x,[position_change,position_days])
-
-#         #feed features to neural network
-        output = net.activate(x)
-
-#       #action recomended by the neural network
-        action = np.argmax(output, axis=0)
-
-        # Profit/loss ratio
-        trade_log['current_date']   = data.index[i]
-
-        trade_log = stock_helper.profit_loss_action(action,trade_log, row_data=vals)
-
-        i += 1
-
-    # Closed any open position
-    trade_log['open_position'] = 0
-    if trade_log['position_days'] > 0:
-        position_change = (
-            trade_log['current_price'] - trade_log['current_position']
-            ) / trade_log['current_position']
-
-        trade_log['open_position'] = position_change * 100
-
-    trade_log = stock_helper.AnalyzeTrainedData(trade_log, 9)
-
-    return float(trade_log["reward"])
-
 def eval_genomes(genome, config):
     global current_stock
     global current_stock_data
@@ -131,7 +32,7 @@ def eval_genomes(genome, config):
     genome.fitness = 0.0
     net = neat.nn.RecurrentNetwork.create(genome, config)
 
-    log = get_action(current_stock_data,net)
+    log = stock_helper.get_action(current_stock_data,net, current_stock, sequence_length, backTest=False)
     reward_log[current_stock] = log
 
     genome.fitness  = log
@@ -159,7 +60,7 @@ def run(config_file):
     p.add_reporter(neat.Checkpointer(5))
 
     # Run for up to 300 generations.
-    winner = p.run(pe.evaluate, 5)
+    winner = p.run(pe.evaluate, 20)
     save_winner(winner, current_stock)
 
     # Display the winning genome.
@@ -186,16 +87,16 @@ if __name__ == '__main__':
 
     # run(config_path)
 
-    ignore_stock = ['JFC']
+    ignore_stock = ['DITO']
 
-    for stock in stock_list[:]:
+    for stock in stock_list[:1]:
 
-        if stock in ignore_stock:
-            current_stock = stock
-            current_stock_data = feature_selection.GetTopFeatures(current_stock,
-                stock_data,
-                max_feature=15,
-                isTrain=True,
-                category=strategy)
-            run(config_path)
+        # if stock in ignore_stock:
+        current_stock = 'DITO'
+        current_stock_data = feature_selection.GetTopFeatures("DITO",
+            stock_data,
+            max_feature=15,
+            isTrain=True,
+            category=strategy)
+        run(config_path)
 
