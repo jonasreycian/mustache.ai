@@ -6,9 +6,10 @@ import multiprocessing
 from utils import stock_helper
 from utils import feature_selection
 
-#hide warnings
+# hide warnings
 import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 
 # Global variable
 sequence_length = 10
@@ -16,34 +17,41 @@ current_stock = ""
 current_stock_data = ""
 stock_data = stock_helper.get_all_stock_data()
 reward_log = {}
-strategy = "hayahay"
+strategy = "emaribbon"
+
 
 def save_winner(winner, stock):
     pickle_out = open(f"result/winner/{strategy}/{stock}.pickle", "wb")
     pickle.dump(winner, pickle_out)
     pickle_out.close()
 
+
 def eval_genomes(genome, config):
     global current_stock
     global current_stock_data
     global reward_log
 
-    #initialize genome
+    # initialize genome
     genome.fitness = 0.0
     net = neat.nn.RecurrentNetwork.create(genome, config)
 
     log = stock_helper.get_action(current_stock_data,net, current_stock, sequence_length, backTest=False)
     reward_log[current_stock] = log
+    genome.fitness = log
 
-    genome.fitness  = log
     return genome.fitness
+
 
 def run(config_file):
     global current_stock
     # Load configuration.
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_file)
+    config = neat.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        config_file,
+    )
 
     pe = neat.parallel.ParallelEvaluator(multiprocessing.cpu_count(), eval_genomes)
 
@@ -64,18 +72,19 @@ def run(config_file):
     save_winner(winner, current_stock)
 
     # Display the winning genome.
-    print('\nBest genome:\n{!s}'.format(winner))
+    print("\nBest genome:\n{!s}".format(winner))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Determine path to configuration file. This path manipulation is
     # here so that the script will run successfully regardless of the
     # current working directory.
-    local_dir = os.path.dirname('__file__')
-    config_path = os.path.join(local_dir, 'config-feedforward.txt')
+    local_dir = os.path.dirname("__file__")
+    config_path = os.path.join(local_dir, "config-feedforward.txt")
 
-    #stock list and shuffle
-    stock_list = [stock for stock,data in stock_data]
-    print (stock_list)
+    # stock list and shuffle
+    stock_list = [stock for stock, data in stock_data]
+    print(stock_list)
 
     # For single train only
     # current_stock = 'JFC'
@@ -87,16 +96,13 @@ if __name__ == '__main__':
 
     # run(config_path)
 
-    ignore_stock = ['DITO']
+    ignore_stock = ["DITO"]
 
     for stock in stock_list[:1]:
 
         # if stock in ignore_stock:
-        current_stock = 'DITO'
-        current_stock_data = feature_selection.GetTopFeatures("DITO",
-            stock_data,
-            max_feature=15,
-            isTrain=True,
-            category=strategy)
+        current_stock = "DITO"
+        current_stock_data = feature_selection.GetTopFeatures(
+            "DITO", stock_data, max_feature=15, isTrain=True, category=strategy
+        )
         run(config_path)
-
