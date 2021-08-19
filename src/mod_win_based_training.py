@@ -6,8 +6,8 @@ import pickle
 from collections import deque
 import multiprocessing
 
-from .utils import stock_helper
-from .utils import feature_selection
+import stock_helper
+import feature_selection
 
 # hide warnings
 import warnings
