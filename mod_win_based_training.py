@@ -12,13 +12,14 @@ import statistics
 import time
 
 from sklearn import preprocessing
-from utils import stock_helper
-from utils import feature_selection
+from src.utils import stock_helper
+from src.utils import feature_selection
 
-#hide warnings
+# hide warnings
 import warnings
 import random
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 
 # Global variable
 sequence_length = 10
@@ -28,106 +29,115 @@ stock_data = stock_helper.get_all_stock_data()
 reward_log = {}
 strategy = "momentum"
 
+
 def save_winner(winner, stock):
     pickle_out = open(f"result/winner/{strategy}/{stock}.pickle", "wb")
     pickle.dump(winner, pickle_out)
     pickle_out.close()
 
+
 def deque_sequence(data):
     global sequence_length
-    #initialize deque .. sequence of
-    #number of sequence by open ,high ,low ,close++
+    # initialize deque .. sequence of
+    # number of sequence by open ,high ,low ,close++
     sequence = deque(maxlen=sequence_length)
 
-    #if sequence_length = 6 .. it looks like this.. a 6 by 5 matrix
+    # if sequence_length = 6 .. it looks like this.. a 6 by 5 matrix
     for _ in range(sequence_length):
         sequence.append([0 for _ in data.columns[:-1]])
 
     # print(f'Sequence: {sequence}')
     return sequence
 
-def get_action(data,net):
 
-    #initialize deque sequence
+def get_action(data, net):
+
+    # initialize deque sequence
     sequence = deque_sequence(data)
 
     global current_stock
 
     trade_log = {}
-    trade_log['stock_name'] = current_stock
-    trade_log['position_days'] = 0
-    trade_log['current_position'] = 0
-    trade_log['total_trades'] = 0
-    trade_log['profit_win'] = 0
-    trade_log['profit_win_count'] = 0
-    trade_log['profit_loss'] = 0
-    trade_log['profit_loss_count'] = 0
-    trade_log['cumulative_profit'] = 0
-    trade_log['position_date'] = ""
+    trade_log["stock_name"] = current_stock
+    trade_log["position_days"] = 0
+    trade_log["current_position"] = 0
+    trade_log["total_trades"] = 0
+    trade_log["profit_win"] = 0
+    trade_log["profit_win_count"] = 0
+    trade_log["profit_loss"] = 0
+    trade_log["profit_loss_count"] = 0
+    trade_log["cumulative_profit"] = 0
+    trade_log["position_date"] = ""
 
     i = 0
-    #FEEDING THE NEURAL NET
+    # FEEDING THE NEURAL NET
     for vals in data.values:
-        #append the values of data (open,high,low,close) to deque sequence
+        # append the values of data (open,high,low,close) to deque sequence
         sequence.append(vals[:-1])
 
-        #convert deque function to a numpy array
+        # convert deque function to a numpy array
         x = np.array(sequence)
 
-        #flatten features
+        # flatten features
         x = x.flatten()
 
-#         #append positon_change and position days ... more feature
-#         x = np.append(x,[position_change,position_days])
+        #         #append positon_change and position days ... more feature
+        #         x = np.append(x,[position_change,position_days])
 
-#         #feed features to neural network
+        #         #feed features to neural network
         output = net.activate(x)
 
-#       #action recomended by the neural network
+        #       #action recomended by the neural network
         action = np.argmax(output, axis=0)
 
         # Profit/loss ratio
-        trade_log['current_date'] = data.index[i]
-        trade_log['current_price'] = vals[-1]
+        trade_log["current_date"] = data.index[i]
+        trade_log["current_price"] = vals[-1]
 
-        trade_log = stock_helper.profit_loss_action(action,trade_log)
+        trade_log = stock_helper.profit_loss_action(action, trade_log)
 
         i += 1
 
     # Closed any open position
-    trade_log['open_position'] = 0
-    if trade_log['position_days'] > 0:
+    trade_log["open_position"] = 0
+    if trade_log["position_days"] > 0:
         position_change = (
-            trade_log['current_price'] - trade_log['current_position']
-            ) / trade_log['current_position']
+            trade_log["current_price"] - trade_log["current_position"]
+        ) / trade_log["current_position"]
 
-        trade_log['open_position'] = position_change * 100
+        trade_log["open_position"] = position_change * 100
 
     trade_log = stock_helper.AnalyzeTrainedData(trade_log, 9)
 
     return float(trade_log["reward"])
+
 
 def eval_genomes(genome, config):
     global current_stock
     global current_stock_data
     global reward_log
 
-    #initialize genome
+    # initialize genome
     genome.fitness = 0.0
     net = neat.nn.RecurrentNetwork.create(genome, config)
 
-    log = get_action(current_stock_data,net)
+    log = get_action(current_stock_data, net)
     reward_log[current_stock] = log
 
-    genome.fitness  = log
+    genome.fitness = log
     return genome.fitness
+
 
 def run(config_file):
     global current_stock
     # Load configuration.
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_file)
+    config = neat.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        config_file,
+    )
 
     pe = neat.parallel.ParallelEvaluator(multiprocessing.cpu_count(), eval_genomes)
 
@@ -148,18 +158,15 @@ def run(config_file):
     save_winner(winner, current_stock)
 
     # Display the winning genome.
-    print('\nBest genome:\n{!s}'.format(winner))
+    print("\nBest genome:\n{!s}".format(winner))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Determine path to configuration file. This path manipulation is
     # here so that the script will run successfully regardless of the
     # current working directory.
-    local_dir = os.path.dirname('__file__')
-    config_path = os.path.join(local_dir, 'config-feedforward.txt')
-
-    #stock list and shuffle
-    stock_list = [stock for stock,data in stock_data]
-    print (stock_list)
+    local_dir = os.path.dirname("__file__")
+    config_path = os.path.join(local_dir, "config/config-feedforward.txt")
 
     # For single train only
     # current_stock = 'JFC'
@@ -171,16 +178,18 @@ if __name__ == '__main__':
 
     # run(config_path)
 
-    ignore_stock = ['JFC']
+    ignore_stock = ["JFC"]
 
-    for stock in stock_list[:]:
-
+    for stock, data in stock_data:
         if stock in ignore_stock:
-            current_stock = stock
-            current_stock_data = feature_selection.GetTopFeatures(current_stock,
-                stock_data,
-                max_feature=15,
-                isTrain=True,
-                category=strategy)
-            run(config_path)
+            continue
 
+        current_stock = stock
+        current_stock_data = feature_selection.GetTopFeatures(
+            current_stock,
+            stock_data,
+            max_feature=15,
+            isTrain=True,
+            category=strategy,
+        )
+        run(config_path)
